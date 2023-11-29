@@ -12,6 +12,9 @@ exports.handler = async (event, context) => {
     
     const submissionUrl = snsMessage.submissionUrl;
     const userEmail = snsMessage.userEmail;
+    const firstName = userEmail.split('.')[0].charAt(0).toUpperCase() + userEmail.split('.')[0].slice(1);
+    const assignmentId = snsMessage.assignmentId;
+    const userId = snsMessage.userId;
 
     const decodedPrivateKey = Buffer.from(
         process.env.GCP_PRIVATE_KEY,
@@ -19,7 +22,7 @@ exports.handler = async (event, context) => {
       ).toString("utf-8");
     const keyFileJson = JSON.parse(decodedPrivateKey);
     const storage = new Storage({ 
-      projectId: 'mydev-405504',
+      projectId: process.env.GCP_PROJECT_NAME,
       credentials: keyFileJson,
     });
 
@@ -30,23 +33,23 @@ exports.handler = async (event, context) => {
         const originalFileName = path.basename(submissionUrl);
 
         const timestamp = new Date().toISOString().replace(/[^0-9]/g, '');
-        const fileName = `${originalFileName.replace('.zip', '')}-${timestamp}.zip`;
+        const fileName = `${userId}/${assignmentId}/${originalFileName.replace('.zip', '')}-${timestamp}.zip`;
 
         await storage.bucket(bucketName).file(fileName).save(zipBuffer);
 
         console.log(`File ${fileName} uploaded to ${bucketName}.`);
 
         console.log(`Zip contents uploaded successfully.`);
-        subject = 'Success';
-        await sendEmail('Zip file has been downloaded and saved successfully.', userEmail);
+        subject = 'Assignment submitted successfully';
+        await sendEmail(`Hi ${firstName},\nThe assignment has been downloaded and saved in GCP bucket successfully.\nPlease find below the path to the assignment.\n\n${fileName}\n\n\nThank you,\nwebapp`, userEmail);
         return {
             statusCode: 200,
             body: JSON.stringify({ message: `Zip file uploaded successfully.` }),
         };
     } catch (error) {
         console.error('Error uploading zip contents:', error);
-        subject = 'Failure';
-        await sendEmail('Error occured while downloading or saving zip file.', userEmail);
+        subject = 'Assignment not submitted successfully';
+        await sendEmail(`Hi ${firstName},\nError occured while downloading or saving the assignment file.\nPlease find below the error details.\n ${error.message}\n\n\nThank you,\nwebapp`, userEmail);
         return {
             statusCode: 500,
             body: JSON.stringify({ error: 'Internal Server Error' }),
@@ -63,14 +66,14 @@ async function sendEmail(statusMessage, mailid) {
         Message: {
             Body: {
                 Text: {
-                    Data: `Status: ${statusMessage}`,
+                    Data: statusMessage,
                 },
             },
             Subject: {
                 Data: `${subject}`,
             },
         },
-        Source: 'notification@demo.mywebapp.me',
+        Source: process.env.SES_SENDER_MAIL_ID,
     };
 
     try {
