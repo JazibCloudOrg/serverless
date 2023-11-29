@@ -4,7 +4,12 @@ const { Storage } = require('@google-cloud/storage');
 const ses = new AWS.SES();
 const dynamoDB = new AWS.DynamoDB.DocumentClient();
 const path = require('path');
+const formData = require('form-data');
+const Mailgun = require('mailgun.js');
+const mailgun = new Mailgun(formData);
+const mg = mailgun.client({username: 'api', key: process.env.MG_API_KEY || 'key-yourkeyhere'});
 let subject;
+const DOMAIN = process.env.MG_APP_DOMAIN;
 
 exports.handler = async (event, context) => {
     const bucketName = process.env.GCP_BUCKET_NAME;
@@ -49,7 +54,7 @@ exports.handler = async (event, context) => {
     } catch (error) {
         console.error('Error uploading zip contents:', error);
         subject = 'Assignment not submitted successfully';
-        await sendEmail(`Hi ${firstName},\nError occured while downloading or saving the assignment file.\nPlease find below the error details.\n ${error.message}\n\n\nThank you,\nwebapp`, userEmail);
+        await sendEmail(`Hi ${firstName},\nError occured while downloading or saving the assignment file.\nPlease find below the error details.\n${error.message}\n\n\nThank you,\nwebapp`, userEmail);
         return {
             statusCode: 500,
             body: JSON.stringify({ error: 'Internal Server Error' }),
@@ -58,32 +63,27 @@ exports.handler = async (event, context) => {
    
 };
 
-async function sendEmail(statusMessage, mailid) {
-    const emailParams = {
-        Destination: {
-            ToAddresses: [mailid],
-        },
-        Message: {
-            Body: {
-                Text: {
-                    Data: statusMessage,
-                },
-            },
-            Subject: {
-                Data: `${subject}`,
-            },
-        },
-        Source: process.env.SES_SENDER_MAIL_ID,
+const sendEmail = async (statusMessage, mailid) => {
+
+    const sender_email = process.env.MG_SENDER_MAIL_ID;
+    const receiver_email = mailid;
+    const email_subject = subject;
+
+    const data = {
+      from: sender_email,
+      to: receiver_email,
+      subject: email_subject,
+      text: statusMessage
     };
 
     try {
-        const emailResult = await ses.sendEmail(emailParams).promise();
+        const emailResult = await mg.messages.create(DOMAIN, data);
         const dynamoParams = {
             TableName: process.env.DYNAMO_DB_NAME,
             Item: {
                 EmailId: 'Sent-' + Date.now(),
                 Status: 'Sent',
-                EmailBody: emailParams.Message.Body.Text.Data,
+                EmailBody: data.text,
                 ReceiverEmail: mailid,
             },
         }
@@ -96,10 +96,56 @@ async function sendEmail(statusMessage, mailid) {
             Item: {
                 EmailId: 'Error-' + Date.now(),
                 Status: 'Error',
-                EmailBody: emailParams.Message.Body.Text.Data,
+                EmailBody: data.text,
                 ReceiverEmail: mailid,
             },
         };
         await dynamoDB.put(dynamoErrorParams).promise();
     }
-}
+};
+
+// async function sendEmail(statusMessage, mailid) {
+//     const emailParams = {
+//         Destination: {
+//             ToAddresses: [mailid],
+//         },
+//         Message: {
+//             Body: {
+//                 Text: {
+//                     Data: statusMessage,
+//                 },
+//             },
+//             Subject: {
+//                 Data: `${subject}`,
+//             },
+//         },
+//         Source: process.env.SES_SENDER_MAIL_ID,
+//     };
+
+//     try {
+//         const emailResult = await ses.sendEmail(emailParams).promise();
+//         const dynamoParams = {
+//             TableName: process.env.DYNAMO_DB_NAME,
+//             Item: {
+//                 EmailId: 'Sent-' + Date.now(),
+//                 Status: 'Sent',
+//                 EmailBody: emailParams.Message.Body.Text.Data,
+//                 ReceiverEmail: mailid,
+//             },
+//         }
+//         await dynamoDB.put(dynamoParams).promise();
+//         console.log('Email sent:', emailResult);
+//     } catch (error) {
+//         console.error('Error sending email:', error);
+//         const dynamoErrorParams = {
+//             TableName: process.env.DYNAMO_DB_NAME,
+//             Item: {
+//                 EmailId: 'Error-' + Date.now(),
+//                 Status: 'Error',
+//                 EmailBody: emailParams.Message.Body.Text.Data,
+//                 ReceiverEmail: mailid,
+//             },
+//         };
+//         await dynamoDB.put(dynamoErrorParams).promise();
+//     }
+// }
